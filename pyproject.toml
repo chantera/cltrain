@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cltrainer"
+version = "0.1"
+authors = [
+    {name = "Hiroki Teranishi", email = "hiroki.teranishi@riken.jp"}
+]
+description = "transformers trainer for contrastive learning"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+dependencies = [
+  "torch~=2.0",
+  "transformers[torch]~=4.30",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools]
+packages = ["cltrainer"]
+package-dir = {"" = "src"}
+
+[tool.ruff]
+select = ["E", "W", "F", "B"]
+ignore = ["B905"]
+line-length = 99
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[tool.black]
+line-length = 99
+
+[tool.isort]
+profile = "black"
+line_length = 99
