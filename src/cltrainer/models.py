@@ -1,6 +1,7 @@
 from typing import Callable, Optional, Protocol, TypedDict
 
 import torch
+import torch.nn.functional as F
 
 
 class Encoder(Protocol):
@@ -12,8 +13,7 @@ class Encoder(Protocol):
         self,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
-    ) -> Output:
-        ...
+    ) -> Output: ...
 
 
 class ModelForContrastiveLearning(torch.nn.Module):
@@ -26,12 +26,11 @@ class ModelForContrastiveLearning(torch.nn.Module):
     def __init__(
         self,
         query_encoder: Encoder,
-        entry_encoder: Encoder,
-        sim: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
-        temperature: Optional[float] = None,
-        *,
+        entry_encoder: Optional[Encoder] = None,
         query_pooler: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
         entry_pooler: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+        sim: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+        temperature: Optional[float] = None,
     ):
         super().__init__()
         self.query_encoder = query_encoder
@@ -58,9 +57,15 @@ class ModelForContrastiveLearning(torch.nn.Module):
     def encode_entry(
         self, input_ids: torch.Tensor, attention_mask: torch.Tensor, **kwargs
     ) -> torch.Tensor:
-        output = self.entry_encoder(input_ids=input_ids, attention_mask=attention_mask, **kwargs)
-        if self.entry_pooler is not None:
-            return self.entry_pooler(output["last_hidden_state"])
+        entry_encoder = self.entry_encoder
+        entry_pooler = self.entry_pooler
+        if entry_encoder is None:
+            entry_encoder = self.query_encoder
+            entry_pooler = self.query_pooler
+
+        output = entry_encoder(input_ids=input_ids, attention_mask=attention_mask, **kwargs)
+        if entry_pooler is not None:
+            return entry_pooler(output["last_hidden_state"])
         return output["pooler_output"]
 
     def forward(
@@ -104,4 +109,7 @@ class CosineSimilarity(torch.nn.Module):
         self.temp = temp
 
     def forward(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
-        return torch.nn.functional.cosine_similarity(x1, x2, dim=1) / self.temp
+        return F.cosine_similarity(x1.unsqueeze(1), x2.unsqueeze(0), dim=-1) / self.temp
+
+    def extra_repr(self) -> str:
+        return f"temp={self.temp}"

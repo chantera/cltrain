@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import torch
 from transformers import BatchEncoding, PreTrainedTokenizerBase
@@ -8,7 +8,7 @@ class DataCollatorForContrastiveLearning:
     def __init__(
         self,
         query_tokenizer: PreTrainedTokenizerBase,
-        entry_tokenizer: PreTrainedTokenizerBase,
+        entry_tokenizer: Optional[PreTrainedTokenizerBase] = None,
     ):
         self.query_tokenizer = query_tokenizer
         self.entry_tokenizer = entry_tokenizer
@@ -29,11 +29,17 @@ class DataCollatorForContrastiveLearning:
                     query_inputs[k[6:]].append(v)
                 elif k.startswith("entry_"):
                     entry_inputs[k[6:]].extend(v)
-            labels.append(offset + example["label"])
+            label = example["label"]
+            labels.append(offset + label if label != -100 else label)
             offset += len(example["entry_input_ids"])
 
-        query_batch = self.query_tokenizer.pad(query_inputs, padding=True, return_tensors="pt")
-        entry_batch = self.entry_tokenizer.pad(entry_inputs, padding=True, return_tensors="pt")
+        query_tokenizer = self.query_tokenizer
+        entry_tokenizer = self.entry_tokenizer
+        if entry_tokenizer is None:
+            entry_tokenizer = query_tokenizer
+
+        query_batch = query_tokenizer.pad(query_inputs, padding=True, return_tensors="pt")
+        entry_batch = entry_tokenizer.pad(entry_inputs, padding=True, return_tensors="pt")
         batch = BatchEncoding(
             {
                 **{"query_" + k: v for k, v in query_batch.items()},
