@@ -1,5 +1,4 @@
 /output
 /cache
-/data/*
-!/data/*.py
+/data
 /SentEval

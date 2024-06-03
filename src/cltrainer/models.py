@@ -27,8 +27,8 @@ class ModelForContrastiveLearning(torch.nn.Module):
         self,
         query_encoder: Encoder,
         entry_encoder: Optional[Encoder] = None,
-        query_pooler: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
-        entry_pooler: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+        query_pooler: Optional[Callable[[Encoder.Output], torch.Tensor]] = None,
+        entry_pooler: Optional[Callable[[Encoder.Output], torch.Tensor]] = None,
         sim: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
         temperature: Optional[float] = None,
     ):
@@ -51,7 +51,7 @@ class ModelForContrastiveLearning(torch.nn.Module):
     ) -> torch.Tensor:
         output = self.query_encoder(input_ids=input_ids, attention_mask=attention_mask, **kwargs)
         if self.query_pooler is not None:
-            return self.query_pooler(output["last_hidden_state"])
+            return self.query_pooler(output)
         return output["pooler_output"]
 
     def encode_entry(
@@ -65,7 +65,7 @@ class ModelForContrastiveLearning(torch.nn.Module):
 
         output = entry_encoder(input_ids=input_ids, attention_mask=attention_mask, **kwargs)
         if entry_pooler is not None:
-            return entry_pooler(output["last_hidden_state"])
+            return entry_pooler(output)
         return output["pooler_output"]
 
     def forward(

@@ -4,19 +4,12 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-from cltrainer import DataCollatorForContrastiveLearning, ModelForContrastiveLearning
 from datasets import load_dataset
-from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoTokenizer,
-    HfArgumentParser,
-    TrainingArguments,
-    set_seed,
-)
-
-from trainer import Trainer
+from trainer import Trainer, TrainingArguments
 from training_utils import LoggerCallback, setup_logger
+from transformers import AutoConfig, AutoModel, AutoTokenizer, HfArgumentParser, set_seed
+
+from cltrainer import DataCollatorForContrastiveLearning, ModelForContrastiveLearning
 
 logger = logging.getLogger(__name__)
 
@@ -91,12 +84,23 @@ def main(args: Arguments, training_args: TrainingArguments):
         eval_dataset = None
 
     class Pooler(torch.nn.Module):
-        def forward(self, x):
-            return x[:, 0]
+        def __init__(self, config, transform_for_eval=True):
+            super().__init__()
+            self.dense = torch.nn.Linear(config.hidden_size, config.hidden_size)
+            self.activation = torch.nn.Tanh()
+            self.transform_for_eval = transform_for_eval
+
+        def forward(self, model_output):
+            pooled_output = model_output["last_hidden_state"][:, 0]
+            if self.training or self.transform_for_eval:
+                pooled_output = self.activation(self.dense(pooled_output))
+            return pooled_output
 
     encoder = AutoModel.from_pretrained(args.model, config=config)
     model = ModelForContrastiveLearning(
-        query_encoder=encoder, query_pooler=Pooler(), temperature=args.temperature
+        query_encoder=encoder,
+        query_pooler=Pooler(config, transform_for_eval=False),
+        temperature=args.temperature,
     )
     print(model)
 

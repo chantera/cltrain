@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 import torch
 import transformers
+from transformers.modeling_utils import unwrap_model
 from transformers.training_args import ParallelMode
 
 from cltrainer.models import ModelForContrastiveLearning
@@ -38,8 +39,8 @@ class ContrastiveLearningTrainer(transformers.Trainer):
             query_embeddings, num_queries = _gather(outputs["query_embeddings"])
             entry_embeddings, num_entries = _gather(outputs["entry_embeddings"])
             labels = _shift_labels(_gather(inputs["labels"])[0], num_queries, num_entries)
-            scores = model.module.sim(query_embeddings, entry_embeddings)
-            loss = model.module.loss(scores, labels)
+            scores = unwrap_model(model).sim(query_embeddings, entry_embeddings)
+            loss = unwrap_model(model).loss(scores, labels)
 
             # retain scores only for the local queries.
             with torch.no_grad():

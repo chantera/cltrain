@@ -2,8 +2,11 @@ import sys
 
 import torch
 from cltrainer import ContrastiveLearningTrainer
+from cltrainer import TrainingArguments as TrainingArguments
 from transformers import EvalPrediction
 
+# NOTE: Use SentEval included in princeton-nlp/SimCSE
+# https://github.com/princeton-nlp/SimCSE/tree/main/SentEval
 PATH_TO_SENTEVAL = "./SentEval"
 PATH_TO_DATA = PATH_TO_SENTEVAL + "/data"
 
@@ -89,8 +92,8 @@ def evaluate_sts(model, tokenizer):
     se = senteval.engine.SE(params, batcher, prepare)
     results = se.eval(["STSBenchmark", "SICKRelatedness"])
 
-    stsb_spearman = results["STSBenchmark"]["spearman"]
-    sickr_spearman = results["SICKRelatedness"]["spearman"]
+    stsb_spearman = results["STSBenchmark"]["dev"]["spearman"][0]
+    sickr_spearman = results["SICKRelatedness"]["dev"]["spearman"][0]
 
     metrics = {
         "stsb_spearman": stsb_spearman,
