@@ -23,6 +23,7 @@ class Arguments:
     temperature: float = 0.05
     max_seq_length: Optional[int] = None
     sts_eval: bool = False
+    mlp_only_training: bool = False
     cache_dir: Optional[str] = None
 
 
@@ -83,25 +84,23 @@ def main(args: Arguments, training_args: TrainingArguments):
             )
 
     class Pooler(torch.nn.Module):
-        def __init__(self, config, transform_for_eval=True):
+        # identical to `transformers.modeling_bert.BertPooler` except for training_only option
+        def __init__(self, config, training_only=False):
             super().__init__()
             self.dense = torch.nn.Linear(config.hidden_size, config.hidden_size)
             self.activation = torch.nn.Tanh()
-            self.transform_for_eval = transform_for_eval
+            self.training_only = training_only
 
-        def forward(self, model_output):
-            pooled_output = model_output["last_hidden_state"][:, 0]
-            if self.training or self.transform_for_eval:
+        def forward(self, hidden_states):
+            pooled_output = hidden_states[:, 0]
+            if self.training or not self.training_only:
                 pooled_output = self.activation(self.dense(pooled_output))
             return pooled_output
 
     encoder = AutoModel.from_pretrained(args.model, config=config)
-    model = ModelForContrastiveLearning(
-        query_encoder=encoder,
-        query_pooler=Pooler(config, transform_for_eval=False),
-        temperature=args.temperature,
-    )
-    print(model)
+    assert hasattr(encoder, "pooler")
+    encoder.pooler = Pooler(config, training_only=args.mlp_only_training)
+    model = ModelForContrastiveLearning(encoder, temperature=args.temperature)
 
     trainer = Trainer(
         model=model,
