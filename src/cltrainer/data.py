@@ -48,3 +48,26 @@ class DataCollatorForContrastiveLearning:
             }
         )
         return batch
+
+
+class DataParallelCollator:
+    def __init__(self, collate_fn, n_gpu, fuse_batch=False):
+        self.collate_fn = collate_fn
+        self.n_gpu = n_gpu
+        self.fuse_batch = fuse_batch
+
+    def __call__(self, examples):
+        batch = self.collate_fn(examples)
+        if self.fuse_batch:
+            return batch  # no need to adjust labels
+
+        # NOTE: assume that `torch.nn.DataParallel.scatter` uses `tensor.chunk` internally.
+        # https://github.com/pytorch/pytorch/blob/v2.0.0/torch/csrc/cuda/comm.cpp#L335
+        labels = []
+        chunks = torch.arange(len(batch["entry_input_ids"])).chunk(self.n_gpu)
+        for chunk, ids in zip(chunks, batch["labels"].chunk(self.n_gpu)):
+            in_chunk = torch.logical_and(chunk[0] <= ids, ids <= chunk[-1])
+            ids = torch.where(in_chunk, ids - chunk[0], -100)
+            labels.append(ids)
+        batch["labels"] = torch.cat(labels)
+        return batch
