@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Optional
 
@@ -20,68 +21,66 @@ class Arguments:
     eval_dataset: Optional[str] = field(default="mteb/stsbenchmark-sts", metadata={"nargs": "?"})
     model: str = "bert-base-uncased"
     temperature: float = 0.05
-    max_length: Optional[int] = None
+    max_seq_length: Optional[int] = None
     sts_eval: bool = False
     cache_dir: Optional[str] = None
 
 
 def main(args: Arguments, training_args: TrainingArguments):
     setup_logger(training_args)
-    logger.warning(
-        f"process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}, "
-        + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
-    )
+    logger.warning(f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}, distributed training: {training_args.parallel_mode.value == 'distributed'}, 16-bits training: {training_args.fp16}")  # noqa  # fmt: skip
     logger.info(f"args: {args}")
     logger.info(f"training args: {training_args}")
     set_seed(training_args.seed)
 
-    data_files = {}
-    if args.train_file is not None:
-        data_files["train"] = args.train_file
-    raw_datasets = load_dataset("text", data_files=data_files, cache_dir=args.cache_dir)
-
     config = AutoConfig.from_pretrained(args.model)
     tokenizer = AutoTokenizer.from_pretrained(args.model)
 
-    preprocessor = Preprocessor(
-        tokenizer, max_length=args.max_length, text_column_name="text", prefix="query_"
-    )
+    train_dataset = None
+    if args.train_file is not None:
+        raw_train_dataset = load_dataset(
+            "csv" if args.train_file.endswith(".csv") else "text",
+            data_files={"train": args.train_file},
+            cache_dir=args.cache_dir,
+            split="train",
+        )
 
-    def preprocess(examples):
-        features = preprocessor(examples)
-        for k in list(features.keys()):
-            if k.startswith("query_"):
-                features["entry_" + k[6:]] = [[v] for v in features[k]]
-        features["label"] = [0] * len(features["query_input_ids"])
-        return features
+        with training_args.main_process_first(desc="train_dataset map pre-processing"):
+            column_names = raw_train_dataset.column_names
+            train_dataset = raw_train_dataset.map(
+                partial(
+                    preprocess,
+                    tokenizer=tokenizer,
+                    max_length=args.max_seq_length,
+                    truncation=True,
+                    text_column_name=column_names[0],
+                    positive_text_column_name=column_names[1] if len(column_names) > 1 else None,
+                    negative_text_column_name=column_names[2] if len(column_names) > 2 else None,
+                ),
+                batched=True,
+            )
 
-    with training_args.main_process_first(desc="dataset map pre-processing"):
-        datasets = raw_datasets.map(preprocess, batched=True)
-
+    eval_dataset = None
     if args.eval_dataset is not None:
         raw_eval_dataset = load_dataset(
             args.eval_dataset, cache_dir=args.cache_dir, split="validation"
         )
 
-        eval_preprocessor1 = Preprocessor(
-            tokenizer, max_length=args.max_length, text_column_name="sentence1", prefix="query_"
-        )
-        eval_preprocessor2 = Preprocessor(
-            tokenizer, max_length=args.max_length, text_column_name="sentence2", prefix="entry_"
-        )
-
-        def eval_preprocess(examples):
-            features = {**eval_preprocessor1(examples), **eval_preprocessor2(examples)}
-            for k in list(features.keys()):
-                if k.startswith("entry_"):
-                    features[k] = [[v] for v in features[k]]
-            features["label"] = [0 if s >= 4.0 else -100 for s in examples["score"]]
-            return features
-
         with training_args.main_process_first(desc="eval_dataset map pre-processing"):
-            eval_dataset = raw_eval_dataset.map(eval_preprocess, batched=True)
-    else:
-        eval_dataset = None
+            eval_dataset = raw_eval_dataset.map(
+                partial(
+                    preprocess,
+                    tokenizer=tokenizer,
+                    max_length=args.max_seq_length,
+                    truncation=True,
+                    text_column_name="sentence1",
+                    positive_text_column_name="sentence2",
+                ),
+                batched=True,
+            )
+            eval_dataset = eval_dataset.map(
+                lambda example: {"label": example["label"] if example["score"] >= 4.0 else -100}
+            )
 
     class Pooler(torch.nn.Module):
         def __init__(self, config, transform_for_eval=True):
@@ -108,7 +107,7 @@ def main(args: Arguments, training_args: TrainingArguments):
         model=model,
         tokenizer=tokenizer,
         args=training_args,
-        train_dataset=datasets.get("train"),
+        train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=DataCollatorForContrastiveLearning(tokenizer),
         do_sts_eval=args.sts_eval,
@@ -139,26 +138,38 @@ def main(args: Arguments, training_args: TrainingArguments):
         pass  # do nothing
 
 
-class Preprocessor:
-    def __init__(
-        self,
-        tokenizer,
-        text_column_name: str = "text",
-        prefix: Optional[str] = None,
-        max_length: Optional[int] = None,
-    ):
-        self.tokenizer = tokenizer
-        self.text_column_name = text_column_name
-        self.prefix = prefix
-        self.max_length = max_length
+def preprocess(
+    examples,
+    tokenizer,
+    text_column_name: str = "text",
+    positive_text_column_name: Optional[str] = None,
+    negative_text_column_name: Optional[str] = None,
+    **kwargs,
+):
+    query_features = tokenizer(examples[text_column_name], **kwargs)
 
-    def __call__(self, examples):
-        features = self.tokenizer(
-            examples[self.text_column_name], max_length=self.max_length, truncation=True
-        )
-        if self.prefix is not None:
-            features = {f"{self.prefix}{k}": v for k, v in features.items()}
-        return features
+    positive_entry_features = query_features
+    if positive_text_column_name is not None:
+        positive_entry_features = tokenizer(examples[positive_text_column_name], **kwargs)
+
+    negative_entry_features = None
+    if negative_text_column_name is not None:
+        negative_entry_features = tokenizer(examples[negative_text_column_name], **kwargs)
+
+    batch_size = len(examples[text_column_name])
+    batch = {f"query_{k}": v for k, v in query_features.items()}
+
+    # each element in an entry feature is a list of feature values for multiple entries
+    for k, v in positive_entry_features.items():
+        batch[f"entry_{k}"] = [[v[i]] for i in range(batch_size)]
+
+    if negative_entry_features is not None:
+        for k, v in negative_entry_features.items():
+            for i in range(batch_size):
+                batch[f"entry_{k}"][i].append(v[i])
+
+    batch["label"] = [0] * batch_size  # positive entry is always the first entry in the list
+    return batch
 
 
 if __name__ == "__main__":

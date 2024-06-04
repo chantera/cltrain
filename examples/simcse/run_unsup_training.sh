@@ -15,11 +15,11 @@ torchrun --nproc_per_node 4 src/train.py \
     --evaluation_strategy steps \
     --eval_steps 125 \
     --save_strategy steps \
+    --save_steps 125 \
     --sts_eval \
     --metric_for_best_model stsb_spearman \
     --load_best_model_at_end \
-    --max_length 32 \
-    --overwrite_output_dir \
+    --max_seq_length 32 \
     --temperature 0.05 \
     --do_train \
     --do_eval \
