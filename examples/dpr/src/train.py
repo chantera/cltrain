@@ -3,8 +3,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import torch
+from data import Preprocessor
 from datasets import load_dataset
 from datasets.fingerprint import get_temporary_cache_files_directory
+from training_utils import LoggerCallback, setup_logger
 from transformers import (
     AutoConfig,
     AutoModel,
@@ -12,14 +15,17 @@ from transformers import (
     DPRConfig,
     DPRContextEncoder,
     DPRQuestionEncoder,
+    EvalPrediction,
     HfArgumentParser,
     set_seed,
 )
 
-from data import Collator, Preprocessor
-from models import BiEncoder, Pooler
-from trainer import Trainer, TrainingArguments
-from training_utils import LoggerCallback, setup_logger
+from cltrainer import (
+    ContrastiveLearningTrainer,
+    DataCollatorForContrastiveLearning,
+    ModelForContrastiveLearning,
+    TrainingArguments,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,20 +37,17 @@ class Arguments:
     test_file: Optional[str] = None
     query_model: str = "bert-base-uncased"
     document_model: str = "bert-base-uncased"
-    max_length: Optional[int] = None
+    max_seq_length: Optional[int] = None
     use_negative: bool = False
     cache_dir: Optional[str] = None
-    develop: bool = False
 
 
 def main(args: Arguments, training_args: TrainingArguments):
     setup_logger(training_args)
-    logger.warning(
-        f"process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}, "
-        + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
-    )
+    logger.warning(f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}, distributed training: {training_args.parallel_mode.value == 'distributed'}, 16-bits training: {training_args.fp16}")  # noqa  # fmt: skip
     logger.info(f"args: {args}")
     logger.info(f"training args: {training_args}")
+    set_seed(training_args.seed)
 
     data_files = {}
     if args.train_file is not None:
@@ -64,52 +67,40 @@ def main(args: Arguments, training_args: TrainingArguments):
     preprocessor = Preprocessor(
         query_tokenizer,
         document_tokenizer,
-        max_length=args.max_length,
+        max_length=args.max_seq_length,
         use_negative=args.use_negative,
     )
 
     with training_args.main_process_first(desc="dataset map pre-processing"):
-        column_names = next(iter(raw_datasets.values())).column_names
-        splits = raw_datasets.map(preprocessor, batched=True, remove_columns=column_names)
+        datasets = raw_datasets.map(preprocessor, batched=True)
+        for column_name in next(iter(datasets.values())).column_names:
+            if not column_name.startswith("document_"):
+                continue
+            datasets = datasets.rename_column(column_name, f"entry_{column_name[9:]}")
 
-    set_seed(training_args.seed)
+    class Pooler(torch.nn.Module):
+        def forward(self, hidden_states):
+            return hidden_states[:, 0]
 
-    if args.develop:
-        scale = 0.25
-        for split in list(splits.keys()):
-            splits[split] = splits[split].select(range(int(len(splits[split]) * scale)))
-        configs = {"query": query_config, "document": document_config}
-        for k, config in configs.items():
-            configs[k] = DPRConfig(
-                hidden_size=int(config.hidden_size * scale),
-                num_hidden_layers=int(config.num_hidden_layers * scale),
-                num_attention_heads=int(config.num_attention_heads * scale),
-                intermediate_size=int(config.intermediate_size * scale),
-            )
-        query_encoder = DPRQuestionEncoder(configs["query"])
-        document_encoder = DPRContextEncoder(configs["document"])
-    else:
-        query_model_cls = DPRQuestionEncoder if isinstance(query_config, DPRConfig) else AutoModel
-        query_encoder = query_model_cls.from_pretrained(args.query_model, config=query_config)
-        if hasattr(query_encoder, "pooler"):
-            query_encoder.pooler = Pooler()
-        document_model_cls = (
-            DPRContextEncoder if isinstance(document_config, DPRConfig) else AutoModel
-        )
-        document_encoder = document_model_cls.from_pretrained(
-            args.document_model, config=document_config
-        )
-        if hasattr(document_encoder, "pooler"):
-            document_encoder.pooler = Pooler()
+    query_model_cls = DPRQuestionEncoder if isinstance(query_config, DPRConfig) else AutoModel
+    query_encoder = query_model_cls.from_pretrained(args.query_model, config=query_config)
+    assert hasattr(query_encoder, "pooler")
+    query_encoder.pooler = Pooler()
+    document_model_cls = DPRContextEncoder if isinstance(document_config, DPRConfig) else AutoModel
+    document_encoder = document_model_cls.from_pretrained(
+        args.document_model, config=document_config
+    )
+    assert hasattr(document_encoder, "pooler")
+    document_encoder.pooler = Pooler()
+    model = ModelForContrastiveLearning(query_encoder, document_encoder)
 
-    model = BiEncoder(query_encoder, document_encoder)
-
-    trainer = Trainer(
+    trainer = ContrastiveLearningTrainer(
         model=model,
         args=training_args,
-        train_dataset=splits.get("train"),
-        eval_dataset=splits.get("validation"),
-        data_collator=Collator(query_tokenizer, document_tokenizer),
+        train_dataset=datasets.get("train"),
+        eval_dataset=datasets.get("validation"),
+        data_collator=DataCollatorForContrastiveLearning(query_tokenizer, document_tokenizer),
+        compute_metrics=compute_metrics,
     )
     trainer.add_callback(LoggerCallback(logger))
 
@@ -140,11 +131,27 @@ def main(args: Arguments, training_args: TrainingArguments):
             trainer.save_metrics("eval", metrics)
 
     if training_args.do_predict:
-        result = trainer.predict(splits["test"])
+        result = trainer.predict(datasets["test"])
         logger.info(f"test metrics: {result.metrics}")
         trainer.log_metrics("predict", result.metrics)
         if training_args.save_strategy != "no":
             trainer.save_metrics("predict", result.metrics)
+
+
+def compute_metrics(p: EvalPrediction):
+    logits, query_embs, document_embs = p.predictions
+    preds = logits.argmax(axis=1)
+    targets = p.label_ids != -100
+    accuracy = (preds[targets] == p.label_ids[targets]).astype("float").mean().item()
+
+    num_documents_per_query = len(document_embs) // len(query_embs)
+    labels = torch.arange(0, len(document_embs), num_documents_per_query).numpy()
+    scores = query_embs @ document_embs.T
+    ranks = ((-scores).argsort() == labels[:, None]).nonzero()[1] + 1
+    assert len(ranks) == len(query_embs)
+    mean_reciprocal_rank = (1 / ranks).mean()
+
+    return {"accuracy": accuracy, "mrr": mean_reciprocal_rank}
 
 
 if __name__ == "__main__":
