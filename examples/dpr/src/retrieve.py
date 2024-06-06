@@ -24,6 +24,7 @@ class Arguments:
     batch_size: int = 16
     strict: bool = False
     cache_dir: Optional[str] = None
+    cuda: bool = torch.cuda.is_available()
 
 
 def load_tsv_data(file) -> Iterable[Document]:
@@ -34,59 +35,46 @@ def load_tsv_data(file) -> Iterable[Document]:
             yield {"id": row[0], "title": row[2], "text": row[1]}  # type: ignore
 
 
-class Retriever:
-    def __init__(self, model, tokenizer, document_file, index_file, max_length=None):
-        documents = {i: document for i, document in enumerate(load_tsv_data(document_file))}
-        indexer = load(index_file)
-        if isinstance(indexer, NaiveIndexer) and torch.cuda.is_available():
-            indexer.index = indexer.index.to(torch.device("cuda"))
-        elif isinstance(indexer, FaissIndexer) and torch.cuda.is_available():
-            indexer = indexer.to(-1, shard=True)
-
-        self.model = model
-        self.tokenizer = tokenizer
-        self.documents = documents
-        self.indexer = indexer
-        self.max_length = max_length
-
-    @torch.no_grad()
-    def __call__(
-        self, query: List[str], k: int = 1
-    ) -> Tuple[List[List[float]], List[List[Document]]]:
-        encoding = self.tokenizer(
-            query, max_length=self.max_length, padding=True, truncation=True, return_tensors="pt"
-        )
-        embeddings = self.model(**encoding)["pooler_output"]
-        scores, indices = self.indexer.search(embeddings, k)
-        documents = [[self.documents[idx] for idx in idxs] for idxs in indices.cpu().numpy()]
-        return scores.tolist(), documents
-
-
 def main(args: Arguments):
     cache_dir = args.cache_dir or get_temporary_cache_files_directory()
     dataset = load_dataset(
         "json", data_files={"test": args.input_file}, cache_dir=cache_dir, split="test"
     )
-
+    documents = {i: document for i, document in enumerate(load_tsv_data(args.document_file))}
+    indexer = load(args.index_file)
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     config = AutoConfig.from_pretrained(args.model)
     model = query_model_from_pretrained(args.model, config=config)
-    if torch.cuda.is_available():
+    if args.cuda:
         model = torch.nn.DataParallel(model.cuda())
+        if isinstance(indexer, NaiveIndexer):
+            indexer.index = indexer.index.to(torch.device("cuda"))
+        elif isinstance(indexer, FaissIndexer):
+            indexer = indexer.to(device=-1, shard=True)
     model.eval()
 
-    retriever = Retriever(
-        model, tokenizer, args.document_file, args.index_file, args.max_seq_length
-    )
+    def retrieve(query: List[str], k: int = 1) -> Tuple[List[List[float]], List[List[int]]]:
+        features = tokenizer(
+            query,
+            max_length=args.max_seq_length,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+        )
+        embeddings = model(**features)["pooler_output"].contiguous()
+        scores, indices = indexer.search(embeddings, k)
+        return scores.tolist(), indices.tolist()
+
     ranks = [-1] * len(dataset)
 
     batch_size = args.batch_size * max(1, torch.cuda.device_count())
     with tqdm(total=len(dataset)) as pbar:
         for offset in range(0, len(dataset), batch_size):
             batch = dataset[offset : offset + batch_size]
-            _, documents = retriever(batch["query"], args.top_k)
+            _, indices = retrieve(batch["query"], args.top_k)
 
-            for i, predicted_docs in enumerate(documents):
+            for i, idxs in enumerate(indices):
+                predicted_docs = [documents[idx] for idx in idxs]
                 if args.strict:
                     correct_doc_id = batch["positive_documents"][i][0]["id"]
                     for j, doc in enumerate(predicted_docs):

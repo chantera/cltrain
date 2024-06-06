@@ -36,7 +36,7 @@ class ContrastiveLearningTrainer(transformers.Trainer):
         elif parallel_mode == ParallelMode.NOT_PARALLEL:
             forward_fn = lambda model, inputs: model(**inputs)  # noqa
         else:
-            raise NotImplementedError(f"parallel mode `{parallel_mode}` is not supported")
+            raise NotImplementedError(f"{parallel_mode=} is not supported")
 
         outputs = forward_fn(model, inputs)
         loss = outputs["loss"]
