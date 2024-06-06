@@ -4,14 +4,13 @@ from dataclasses import dataclass
 from typing import Iterable, List, Optional, Tuple
 
 import torch
+from data import Document
 from datasets import load_dataset
 from datasets.fingerprint import get_temporary_cache_files_directory
-from tqdm import tqdm
-from transformers import AutoModel, AutoTokenizer, HfArgumentParser
-
-from data import Document, tokenize_query
 from indexer import FaissIndexer, NaiveIndexer, load
-from models import Encoder, Pooler
+from model_utils import query_model_from_pretrained
+from tqdm import tqdm
+from transformers import AutoConfig, AutoTokenizer, HfArgumentParser
 
 
 @dataclass
@@ -20,7 +19,7 @@ class Arguments:
     document_file: str
     index_file: str
     model: str = "bert-base-uncased"
-    max_length: Optional[int] = None
+    max_seq_length: Optional[int] = None
     top_k: int = 10
     batch_size: int = 16
     strict: bool = False
@@ -36,10 +35,9 @@ def load_tsv_data(file) -> Iterable[Document]:
 
 
 class Retriever:
-    def __init__(self, model: Encoder, tokenizer, document_file, index_file, max_length=None):
+    def __init__(self, model, tokenizer, document_file, index_file, max_length=None):
         documents = {i: document for i, document in enumerate(load_tsv_data(document_file))}
         indexer = load(index_file)
-        print("INDEX:", type(indexer), len(indexer), indexer.dim)
         if isinstance(indexer, NaiveIndexer) and torch.cuda.is_available():
             indexer.index = indexer.index.to(torch.device("cuda"))
         elif isinstance(indexer, FaissIndexer) and torch.cuda.is_available():
@@ -55,8 +53,8 @@ class Retriever:
     def __call__(
         self, query: List[str], k: int = 1
     ) -> Tuple[List[List[float]], List[List[Document]]]:
-        encoding = tokenize_query(
-            self.tokenizer, query, padding=True, max_length=self.max_length, return_tensors="pt"
+        encoding = self.tokenizer(
+            query, max_length=self.max_length, padding=True, truncation=True, return_tensors="pt"
         )
         embeddings = self.model(**encoding)["pooler_output"]
         scores, indices = self.indexer.search(embeddings, k)
@@ -66,18 +64,20 @@ class Retriever:
 
 def main(args: Arguments):
     cache_dir = args.cache_dir or get_temporary_cache_files_directory()
-    raw_datasets = load_dataset("json", data_files={"test": args.input_file}, cache_dir=cache_dir)
-    dataset = raw_datasets["test"]
+    dataset = load_dataset(
+        "json", data_files={"test": args.input_file}, cache_dir=cache_dir, split="test"
+    )
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
-    model = AutoModel.from_pretrained(args.model)
-    if hasattr(model, "pooler"):
-        model.pooler = Pooler()
+    config = AutoConfig.from_pretrained(args.model)
+    model = query_model_from_pretrained(args.model, config=config)
     if torch.cuda.is_available():
         model = torch.nn.DataParallel(model.cuda())
     model.eval()
 
-    retriever = Retriever(model, tokenizer, args.document_file, args.index_file, args.max_length)
+    retriever = Retriever(
+        model, tokenizer, args.document_file, args.index_file, args.max_seq_length
+    )
     ranks = [-1] * len(dataset)
 
     batch_size = args.batch_size * max(1, torch.cuda.device_count())

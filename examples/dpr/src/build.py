@@ -3,20 +3,11 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Iterator, Optional
 
 import torch
-from tqdm import tqdm
-from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoTokenizer,
-    DataCollatorWithPadding,
-    DPRConfig,
-    DPRContextEncoder,
-    HfArgumentParser,
-)
-
 from data import Document, tokenize_document
 from indexer import FaissIndexer, Indexer, NaiveIndexer, save
-from models import Pooler
+from model_utils import document_model_from_pretrained
+from tqdm import tqdm
+from transformers import AutoConfig, AutoTokenizer, DataCollatorWithPadding, HfArgumentParser
 
 
 @dataclass
@@ -24,7 +15,7 @@ class Arguments:
     input_file: str
     output_file: str
     model: str = "bert-base-uncased"
-    max_length: Optional[int] = None
+    max_seq_length: Optional[int] = None
     batch_size: int = 16
     no_faiss: bool = False
 
@@ -61,7 +52,7 @@ class Dataset(torch.utils.data.IterableDataset):
         tokenizer = self.tokenizer
         for batch in _iter_batch(self.file, self.batch_size):
             encoding = tokenize_document(
-                tokenizer, batch, include_title=True, max_length=self.max_length
+                tokenizer, batch, include_title=True, max_length=self.max_length, truncation=True
             )
             for i in range(len(batch)):
                 yield {k: v[i] for k, v in encoding.items()}
@@ -70,16 +61,13 @@ class Dataset(torch.utils.data.IterableDataset):
 def main(args: Arguments):
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     data_loader = torch.utils.data.DataLoader(
-        Dataset(args.input_file, tokenizer, args.max_length),
+        Dataset(args.input_file, tokenizer, args.max_seq_length),
         batch_size=args.batch_size * max(1, torch.cuda.device_count()),
         collate_fn=DataCollatorWithPadding(tokenizer),
     )
 
     config = AutoConfig.from_pretrained(args.model)
-    model_cls = DPRContextEncoder if isinstance(config, DPRConfig) else AutoModel
-    model = model_cls.from_pretrained(args.model, config=config)
-    if hasattr(model, "pooler"):
-        model.pooler = Pooler()
+    model = document_model_from_pretrained(args.model, config=config)
     if torch.cuda.is_available():
         model = torch.nn.DataParallel(model.cuda())
     model.eval()

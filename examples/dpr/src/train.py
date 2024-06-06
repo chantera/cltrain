@@ -7,18 +7,9 @@ import torch
 from data import Preprocessor
 from datasets import load_dataset
 from datasets.fingerprint import get_temporary_cache_files_directory
+from model_utils import document_model_from_pretrained, query_model_from_pretrained
 from training_utils import LoggerCallback, setup_logger
-from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoTokenizer,
-    DPRConfig,
-    DPRContextEncoder,
-    DPRQuestionEncoder,
-    EvalPrediction,
-    HfArgumentParser,
-    set_seed,
-)
+from transformers import AutoConfig, AutoTokenizer, EvalPrediction, HfArgumentParser, set_seed
 
 from cltrainer import (
     ContrastiveLearningTrainer,
@@ -78,20 +69,8 @@ def main(args: Arguments, training_args: TrainingArguments):
                 continue
             datasets = datasets.rename_column(column_name, f"entry_{column_name[9:]}")
 
-    class Pooler(torch.nn.Module):
-        def forward(self, hidden_states):
-            return hidden_states[:, 0]
-
-    query_model_cls = DPRQuestionEncoder if isinstance(query_config, DPRConfig) else AutoModel
-    query_encoder = query_model_cls.from_pretrained(args.query_model, config=query_config)
-    assert hasattr(query_encoder, "pooler")
-    query_encoder.pooler = Pooler()
-    document_model_cls = DPRContextEncoder if isinstance(document_config, DPRConfig) else AutoModel
-    document_encoder = document_model_cls.from_pretrained(
-        args.document_model, config=document_config
-    )
-    assert hasattr(document_encoder, "pooler")
-    document_encoder.pooler = Pooler()
+    query_encoder = query_model_from_pretrained(args.query_model, config=query_config)
+    document_encoder = document_model_from_pretrained(args.document_model, config=document_config)
     model = ModelForContrastiveLearning(query_encoder, document_encoder)
 
     trainer = ContrastiveLearningTrainer(
@@ -155,9 +134,7 @@ def compute_metrics(p: EvalPrediction):
 
 
 if __name__ == "__main__":
-    CONFIG_FILE = Path(__file__).parents[1] / "default.conf"
+    CONFIG_FILE = Path(__file__).parents[1] / "training.conf"
     parser = HfArgumentParser((Arguments, TrainingArguments))
     args, training_args = parser.parse_args_into_dataclasses(args_filename=CONFIG_FILE)
-    if args.validation_file is None:
-        training_args.evaluation_strategy = "no"
     main(args, training_args)
