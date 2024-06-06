@@ -4,13 +4,14 @@ from dataclasses import dataclass
 from typing import Iterable, List, Optional, Tuple
 
 import torch
-from data import Document
 from datasets import load_dataset
 from datasets.fingerprint import get_temporary_cache_files_directory
-from indexer import FaissIndexer, NaiveIndexer, load
-from model_utils import query_model_from_pretrained
 from tqdm import tqdm
 from transformers import AutoConfig, AutoTokenizer, HfArgumentParser
+
+from .data import Document
+from .indexer import FaissIndexer, NaiveIndexer, load
+from .model_utils import query_model_from_pretrained
 
 
 @dataclass

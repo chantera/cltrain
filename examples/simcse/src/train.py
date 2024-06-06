@@ -5,12 +5,12 @@ from pathlib import Path
 from typing import Optional
 
 import torch
+from cltrainer import DataCollatorForContrastiveLearning, ModelForContrastiveLearning
 from datasets import load_dataset
-from trainer import Trainer, TrainingArguments
-from training_utils import LoggerCallback, setup_logger
 from transformers import AutoConfig, AutoModel, AutoTokenizer, HfArgumentParser, set_seed
 
-from cltrainer import DataCollatorForContrastiveLearning, ModelForContrastiveLearning
+from .trainer import Trainer, TrainingArguments
+from .training_utils import LoggerCallback, setup_logger
 
 logger = logging.getLogger(__name__)
 

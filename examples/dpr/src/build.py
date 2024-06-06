@@ -3,11 +3,12 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Iterator, Optional
 
 import torch
-from data import Document, tokenize_document
-from indexer import FaissIndexer, Indexer, NaiveIndexer, save
-from model_utils import document_model_from_pretrained
 from tqdm import tqdm
 from transformers import AutoConfig, AutoTokenizer, DataCollatorWithPadding, HfArgumentParser
+
+from .data import Document, tokenize_document
+from .indexer import FaissIndexer, Indexer, NaiveIndexer, save
+from .model_utils import document_model_from_pretrained
 
 
 @dataclass

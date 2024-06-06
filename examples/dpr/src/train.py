@@ -4,19 +4,19 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-from data import Preprocessor
-from datasets import load_dataset
-from datasets.fingerprint import get_temporary_cache_files_directory
-from model_utils import document_model_from_pretrained, query_model_from_pretrained
-from training_utils import LoggerCallback, setup_logger
-from transformers import AutoConfig, AutoTokenizer, EvalPrediction, HfArgumentParser, set_seed
-
 from cltrainer import (
     ContrastiveLearningTrainer,
     DataCollatorForContrastiveLearning,
     ModelForContrastiveLearning,
     TrainingArguments,
 )
+from datasets import load_dataset
+from datasets.fingerprint import get_temporary_cache_files_directory
+from transformers import AutoConfig, AutoTokenizer, EvalPrediction, HfArgumentParser, set_seed
+
+from .data import Preprocessor
+from .model_utils import document_model_from_pretrained, query_model_from_pretrained
+from .training_utils import LoggerCallback, setup_logger
 
 logger = logging.getLogger(__name__)
 
