@@ -9,8 +9,8 @@ from cltrainer import DataCollatorForContrastiveLearning, ModelForContrastiveLea
 from datasets import load_dataset
 from transformers import AutoConfig, AutoModel, AutoTokenizer, HfArgumentParser, set_seed
 
-from .trainer import Trainer, TrainingArguments
-from .training_utils import LoggerCallback, setup_logger
+from trainer import Trainer, TrainingArguments
+from training_utils import LoggerCallback, setup_logger
 
 logger = logging.getLogger(__name__)
 

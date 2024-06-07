@@ -14,9 +14,9 @@ from datasets import load_dataset
 from datasets.fingerprint import get_temporary_cache_files_directory
 from transformers import AutoConfig, AutoTokenizer, EvalPrediction, HfArgumentParser, set_seed
 
-from .data import Preprocessor
-from .model_utils import document_model_from_pretrained, query_model_from_pretrained
-from .training_utils import LoggerCallback, setup_logger
+from data import Preprocessor
+from model_utils import document_model_from_pretrained, query_model_from_pretrained
+from training_utils import LoggerCallback, setup_logger
 
 logger = logging.getLogger(__name__)
 

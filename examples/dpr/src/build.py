@@ -6,9 +6,9 @@ import torch
 from tqdm import tqdm
 from transformers import AutoConfig, AutoTokenizer, DataCollatorWithPadding, HfArgumentParser
 
-from .data import Document, tokenize_document
-from .indexer import FaissIndexer, Indexer, NaiveIndexer, save
-from .model_utils import document_model_from_pretrained
+from data import Document, tokenize_document
+from indexer import FaissIndexer, Indexer, NaiveIndexer, save
+from model_utils import document_model_from_pretrained
 
 
 @dataclass
