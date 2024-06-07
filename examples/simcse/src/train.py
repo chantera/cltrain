@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-from cltrainer import DataCollatorForContrastiveLearning, ModelForContrastiveLearning
+from cltrain import DataCollatorForContrastiveLearning, ModelForContrastiveLearning
 from datasets import load_dataset
 from transformers import AutoConfig, AutoModel, AutoTokenizer, HfArgumentParser, set_seed
 

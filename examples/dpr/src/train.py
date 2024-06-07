@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-from cltrainer import (
+from cltrain import (
     ContrastiveLearningTrainer,
     DataCollatorForContrastiveLearning,
     ModelForContrastiveLearning,

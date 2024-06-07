@@ -1,8 +1,8 @@
 import sys
 
 import torch
-from cltrainer import ContrastiveLearningTrainer
-from cltrainer import TrainingArguments as TrainingArguments
+from cltrain import ContrastiveLearningTrainer
+from cltrain import TrainingArguments as TrainingArguments
 from transformers import EvalPrediction
 
 # NOTE: Use SentEval included in princeton-nlp/SimCSE
