@@ -128,9 +128,10 @@ def compute_metrics(p: EvalPrediction):
     scores = query_embs @ document_embs.T
     ranks = ((-scores).argsort() == labels[:, None]).nonzero()[1] + 1
     assert len(ranks) == len(query_embs)
+    average_rank = ranks.mean()
     mean_reciprocal_rank = (1 / ranks).mean()
 
-    return {"accuracy": accuracy, "mrr": mean_reciprocal_rank}
+    return {"accuracy": accuracy, "average_rank": average_rank, "mrr": mean_reciprocal_rank}
 
 
 if __name__ == "__main__":

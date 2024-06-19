@@ -3,6 +3,8 @@
 TRAIN_FILE="./data/nli_for_simcse.csv"
 OUTPUT_DIR="./output/my-sup-simcse-bert-base-uncased"
 
+mkdir -p $OUTPUT_DIR
+
 torchrun --nproc_per_node 4 src/train.py \
     --model bert-base-uncased \
     --train_file $TRAIN_FILE \

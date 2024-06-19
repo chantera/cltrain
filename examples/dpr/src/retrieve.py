@@ -68,7 +68,7 @@ def main(args: Arguments):
 
     ranks = [-1] * len(dataset)
 
-    batch_size = args.batch_size * max(1, torch.cuda.device_count())
+    batch_size = args.batch_size * max(1, torch.cuda.device_count() if args.cuda else 1)
     with tqdm(total=len(dataset)) as pbar:
         for offset in range(0, len(dataset), batch_size):
             batch = dataset[offset : offset + batch_size]

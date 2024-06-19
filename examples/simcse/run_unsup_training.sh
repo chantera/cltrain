@@ -3,6 +3,8 @@
 TRAIN_FILE="./data/wiki1m_for_simcse.txt"
 OUTPUT_DIR="./output/my-unsup-simcse-bert-base-uncased"
 
+mkdir -p $OUTPUT_DIR
+
 torchrun --nproc_per_node 4 src/train.py \
     --model bert-base-uncased \
     --train_file $TRAIN_FILE \
