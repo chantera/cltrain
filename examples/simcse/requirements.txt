@@ -3,3 +3,4 @@ torch == 2.*
 transformers[torch] == 4.*
 datasets == 2.*
 scikit-learn  # for SentEval
+prettytable  # for SimCSE/evaluation.py

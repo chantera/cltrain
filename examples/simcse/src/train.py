@@ -122,6 +122,10 @@ def main(args: Arguments, training_args: TrainingArguments):
         logger.info(f"train metrics: {result.metrics}")
         trainer.log_metrics("train", result.metrics)
         if training_args.save_strategy != "no":
+            if training_args.should_save:
+                output_dir = Path(training_args.output_dir)
+                tokenizer.save_pretrained(output_dir / "encoder")
+                encoder.save_pretrained(output_dir / "encoder")
             trainer.save_model()
             trainer.save_state()
             trainer.save_metrics("train", result.metrics)
